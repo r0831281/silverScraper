@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fetch Doctors</title>
+  <style>
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 8px;
+      text-align: left;
+    }
+    th {
+      background-color: #f2f2f2;
+    }
+    button {
+      margin: 10px 0;
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.5/xlsx.full.min.js"></script>
+</head>
+<body onload="fetchData()">
+  <pre>
+    _____  _____ _____________      __  _             _                  _______          _  __      ____   ___  
+    |  __ \|_   _|___  /_   _\ \    / / | |           | |                |__   __|        | | \ \    / /_ | / _ \ 
+    | |__) | | |    / /  | |  \ \  / /  | | ___   ___ | | ___   _ _ __      | | ___   ___ | |  \ \  / / | || | | |
+    |  _  /  | |   / /   | |   \ \/ /   | |/ _ \ / _ \| |/ / | | | '_ \     | |/ _ \ / _ \| |   \ \/ /  | || | | |
+    | | \ \ _| |_ / /__ _| |_   \  /    | | (_) | (_) |   <| |_| | |_) |    | | (_) | (_) | |    \  /   | || |_| |
+    |_|  \_\_____/_____|_____|   \/     |_|\___/ \___/|_|\_\\__,_| .__/     |_|\___/ \___/|_|     \/    |_(_)___/ 
+                                                                 | |                                              
+                                                                 |_|                                              -- made by jonas with &#x2764;&#xFE0F; 
+  </pre>
+  <pre>Click the "Refetch Data" button to fetch data from the API and display it in the table. Click the "Export to XLSX" button to export the data to an XLSX file.</pre>
+
+  <div style="display: flex; align-items: center; margin-bottom: 10px;">
+    <input type="text" id="search-field" placeholder="Search by Name, RIZIV-nr, etc." style="padding: 5px; margin-right: 10px;">
+    <button onclick="searchData()">Search</button>
+  </div>
+
+  <button onclick="fetchData()">Refetch Data</button>
+  
+  <button onclick="exportToXLSX()">Export to XLSX</button>
+  
+  <div id="loading-icon" style="display: none; text-align: center;">
+    <pre>
+        _                 _ _             
+        | |               | (_)            
+        | | ___   __ _  __| |_ _ __   __ _ 
+        | |/ _ \ / _` |/ _` | | '_ \ / _` |
+        | | (_) | (_| | (_| | | | | | (_| |
+        |_|\___/ \__,_|\__,_|_|_| |_|\__, |
+                                      __/ |......
+                                     |___/ 
+    </pre>
+  </div>
+
+  <table id="data-table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>RIZIV-nr</th>
+        <th>Convention State</th>
+        <th>Qualification</th>
+        <th>Qualification Date</th>
+        <th>Address</th> <!-- New Address Column -->
+      </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>
+                <pre>
+                    _                 _ _             
+                    | |               | (_)            
+                    | | ___   __ _  __| |_ _ __   __ _ 
+                    | |/ _ \ / _` |/ _` | | '_ \ / _` |
+                    | | (_) | (_| | (_| | | | | | (_| |
+                    |_|\___/ \__,_|\__,_|_|_| |_|\__, |
+                                                  __/ |
+                                                 |___/ 
+                </pre>
+             </td>
+        </tr>
+    </tbody>
+  </table>
+
+  <script>
+
+    function filterData(data, searchTerm) {
+      return data.filter(row => {
+        const searchString = searchTerm.toLowerCase();
+        return row.join(' ').toLowerCase().includes(searchString);
+      });
+    }
+
+    let fetchedData = [];
+    
+    document.getElementById('search-field').addEventListener('keypress', function(event) {
+      if (event.key === 'Enter') {
+        searchData();
+      }
+    });
+    
+    // Function to fetch data from the API for a specific page
+    function fetchData(pageNumber = 1, allData = []) {
+      const url = `https://corsproxy.io/?https://webappsa.riziv-inami.fgov.be/silverpages/Home/SearchHcw/?PageNumber=${pageNumber}&Form.Name=&Form.FirstName=&Form.Profession=&Form.Specialisation=&Form.ConventionState=&Form.Location=leuven&Form.NihdiNumber=&Form.Qualification=&Form.NorthEastLat=&Form.NorthEastLng=&Form.SouthWestLat=&Form.SouthWestLng=&Form.LocationLng=&Form.LocationLat=`;
+
+      // Show loading icon
+      document.getElementById('loading-icon').style.display = 'block';
+
+      // empty table
+      document.querySelector('#data-table tbody').innerHTML = '';
+
+      return fetch(url)
+        .then(response => {
+          if (!response.ok) {
+            throw new Error('Network response was not ok');
+          }
+          return response.text();
+        })
+        .then(html => {
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html, 'text/html');
+
+          // Extract data from the current page
+          const entries = doc.querySelectorAll('.card');
+          entries.forEach(entry => {
+            const name = getFieldValue(entry, 'Naam') || 'undefined';
+            const rizivNr = getFieldValue(entry, 'RIZIV-nr') || 'undefined';
+            const conventionState = getFieldValue(entry, 'Conv.') || 'undefined';
+            const qualification = getFieldValue(entry, 'Kwalificatie') || 'undefined';
+            const qualificationDate = getFieldValue(entry, 'Kwal. datum') || 'undefined';
+            const address = getAddress(entry) || 'undefined'; // Extract the address
+
+            // Add the data to the allData array
+            allData.push([name, rizivNr, conventionState, qualification, qualificationDate, address]);
+          });
+
+          // Find the number of pages to loop through
+          const paginationItems = doc.querySelectorAll('.pagination .page-item');
+          const totalPages = paginationItems.length - 2; // Exclude 'Previous' and 'Next'
+
+          // If there are more pages, recursively fetch data for each page
+          if (pageNumber < totalPages) {
+            return fetchData(pageNumber + 1, allData);
+          } else {
+            // All pages have been fetched, build the table with the collected data
+            buildTable(allData);
+            fetchedData = allData;
+          }
+        })
+        .catch(error => {
+          console.error('Error fetching locations:', error);
+        })
+        .finally(() => {
+          // Hide loading icon
+          document.getElementById('loading-icon').style.display = 'none';
+        });
+    }
+
+    // Function to build the table with the collected data
+    function buildTable(data) {
+      const tableBody = document.querySelector('#data-table tbody');
+      tableBody.innerHTML = '';
+
+      data.forEach(row => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${row[0]}</td>
+          <td>${row[1]}</td>
+          <td>${row[2]}</td>
+          <td>${row[3]}</td>
+          <td>${row[4]}</td>
+          <td>${row[5]}</td> <!-- Address column -->
+        `;
+        tableBody.appendChild(tr);
+      });
+    }
+
+    // Function to retrieve the value next to a specific label
+    function getFieldValue(entry, labelText) {
+      const label = Array.from(entry.querySelectorAll('label')).find(el => el.textContent.trim() === labelText);
+      if (label) {
+        const valueElement = label.parentElement.querySelector('.col-sm-8 small');
+        return valueElement ? valueElement.textContent.trim() : null;
+      }
+      return null;
+    }
+
+    // Function to extract the address from the entry
+    function getAddress(entry) {
+      const addressElements = entry.querySelectorAll('.col-sm-8 p small');
+      if (addressElements.length > 1) {
+        const address = addressElements[1].innerHTML.trim().replace(/<br\s*\/?>/g, ', ');
+        return address;
+      }
+      return null;
+    }
+
+    // Function to search data
+    function searchData() {
+      const searchTerm = document.getElementById('search-field').value;
+      const filteredData = filterData(fetchedData, searchTerm);
+      buildTable(filteredData);
+    }
+
+    // Export to XLSX
+    function exportToXLSX() {
+      const worksheet = XLSX.utils.aoa_to_sheet(fetchedData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Doctors Data');
+      XLSX.writeFile(workbook, 'doctors_data.xlsx');
+    }
+
+  </script>
+
+</body>
+</html>
