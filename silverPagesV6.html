@@ -101,14 +101,16 @@
     });
 
     // Function to fetch data from the API for a specific page
-    async function fetchData(parallelLimit = 3) {
-  const allData = [];
+  async function fetchData(parallelLimit = 3) {
+  const localStorageKeyPrefix = "doctorDataBatch";
   let currentPage = 1;
   let isLastPage = false;
   const retries = 4;
+  const batchSize = 50; // Number of pages per batch
+  let batchIndex = 0; // Track the batch number
 
   // Show loading icon
-  document.getElementById('loading-icon').style.display = 'block';
+  document.getElementById("loading-icon").style.display = "block";
 
   // Helper function to fetch a single page with retries
   const fetchPage = async (pageNumber, retryCount = retries) => {
@@ -121,29 +123,29 @@
       }
       const html = await response.text();
       const parser = new DOMParser();
-      const doc = parser.parseFromString(html, 'text/html');
+      const doc = parser.parseFromString(html, "text/html");
 
       // Extract data from the current page
-      const entries = doc.querySelectorAll('.card');
-      const pageData = Array.from(entries).map(entry => {
-        const name = getFieldValue(entry, 'Naam') || 'undefined';
-        const rizivNr = getFieldValue(entry, 'RIZIV-nr') || 'undefined';
-        const conventionState = getFieldValue(entry, 'Conv.') || 'undefined';
-        const qualification = getFieldValue(entry, 'Kwalificatie') || 'undefined';
-        const qualificationDate = getFieldValue(entry, 'Kwal. datum') || 'undefined';
-        const address = getAddress(entry) || 'undefined';
+      const entries = doc.querySelectorAll(".card");
+      const pageData = Array.from(entries).map((entry) => {
+        const name = getFieldValue(entry, "Naam") || "undefined";
+        const rizivNr = getFieldValue(entry, "RIZIV-nr") || "undefined";
+        const conventionState = getFieldValue(entry, "Conv.") || "undefined";
+        const qualification = getFieldValue(entry, "Kwalificatie") || "undefined";
+        const qualificationDate = getFieldValue(entry, "Kwal. datum") || "undefined";
+        const address = getAddress(entry) || "undefined";
         return [name, rizivNr, conventionState, qualification, qualificationDate, address];
       });
 
       // Determine if it's the last page
-      const paginationItems = doc.querySelectorAll('.pagination .page-item');
+      const paginationItems = doc.querySelectorAll(".pagination .page-item");
       isLastPage = paginationItems.length <= 2;
 
       return pageData;
     } catch (error) {
       if (retryCount > 0) {
         console.warn(`Retrying page ${pageNumber}... (${retries - retryCount + 1}/${retries})`);
-        await new Promise(resolve => setTimeout(resolve, 1500)); // Retry after 1 second
+        await new Promise((resolve) => setTimeout(resolve, 1500)); // Retry after 1.5 seconds
         return fetchPage(pageNumber, retryCount - 1);
       } else {
         console.error(`Failed to fetch page ${pageNumber} after multiple attempts:`, error);
@@ -152,33 +154,44 @@
     }
   };
 
-  // Fetch pages in parallel with a limit
+  // Fetch pages in parallel with a limit and save in batches
   while (!isLastPage) {
     const fetchPromises = [];
+    const batchData = [];
+
     for (let i = 0; i < parallelLimit && !isLastPage; i++) {
       fetchPromises.push(fetchPage(currentPage++));
-      await new Promise(resolve => setTimeout(resolve, 2000)); // Delay between requests
-  
+      await new Promise((resolve) => setTimeout(resolve, 2000)); // Delay between requests
     }
+
     const results = await Promise.all(fetchPromises);
-    results.forEach(pageData => allData.push(...pageData));
+    results.forEach((pageData) => batchData.push(...pageData));
+
+    // Save the batch into a separate localStorage key
+    const batchKey = `${localStorageKeyPrefix}-${batchIndex}`;
+    localStorage.setItem(batchKey, JSON.stringify(batchData));
+    console.log(`Batch saved: ${batchKey}, Entries: ${batchData.length}`);
+    batchIndex++; // Increment batch index
   }
 
   // Hide the loading icon
-  document.getElementById('loading-icon').style.display = 'none';
+  document.getElementById("loading-icon").style.display = "none";
 
-  // Build the table with the collected data
-  buildTable(allData);
-  fetchedData = allData;
+  // Inform the user that data is saved in localStorage
+  alert("Data fetching complete! Reload the table from localStorage.");
 }
 
-    // Function to build the table with the collected data
-    function buildTable(data) {
-      const tableBody = document.querySelector('#data-table tbody');
-      tableBody.innerHTML = '';
+// Function to build the table from localStorage batches
+function buildTableFromLocalStorage() {
+  const tableBody = document.querySelector("#data-table tbody");
+  tableBody.innerHTML = "";
 
-      data.forEach(row => {
-        const tr = document.createElement('tr');
+  Object.keys(localStorage)
+    .filter((key) => key.startsWith("doctorDataBatch"))
+    .forEach((key) => {
+      const batchData = JSON.parse(localStorage.getItem(key));
+      batchData.forEach((row) => {
+        const tr = document.createElement("tr");
         tr.innerHTML = `
           <td>${row[0]}</td>
           <td>${row[1]}</td>
@@ -189,8 +202,27 @@
         `;
         tableBody.appendChild(tr);
       });
-    }
+    });
+}
 
+// Function to search data directly from localStorage
+function searchData() {
+  const searchTerm = document.getElementById("search-field").value.toLowerCase();
+  const filteredData = [];
+
+  Object.keys(localStorage)
+    .filter((key) => key.startsWith("doctorDataBatch"))
+    .forEach((key) => {
+      const batchData = JSON.parse(localStorage.getItem(key));
+      batchData.forEach((row) => {
+        if (row.join(" ").toLowerCase().includes(searchTerm)) {
+          filteredData.push(row);
+        }
+      });
+    });
+
+  buildTable(filteredData);
+}
     // Function to retrieve the value next to a specific label
     function getFieldValue(entry, labelText) {
       const label = Array.from(entry.querySelectorAll('label')).find(el => el.textContent.trim() === labelText);
@@ -211,13 +243,6 @@
         return address.trim(); // Trim the final result to remove any extra leading/trailing spaces
       }
       return null;
-    }
-
-    // Function to search data
-    function searchData() {
-      const searchTerm = document.getElementById('search-field').value;
-      const filteredData = filterData(fetchedData, searchTerm);
-      buildTable(filteredData);
     }
 
     // Export to XLSX
