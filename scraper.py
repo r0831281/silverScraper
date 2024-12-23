@@ -7,7 +7,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from tkinter.filedialog import asksaveasfilename
 import threading
-import corsProxy
+import subprocess
+import os
 
 
 # Initialize the SQLite database
@@ -23,7 +24,8 @@ def initialize_database():
             convention_state TEXT,
             qualification TEXT,
             qualification_date TEXT,
-            address TEXT
+            address TEXT,
+            city TEXT
         )
     """)
     conn.commit()
@@ -31,7 +33,7 @@ def initialize_database():
 
 
 # Function to fetch a single page with retries
-def fetch_page(page_number, retries=3):
+def fetch_page(page_number, retries=5):
     url = f"http://localhost:8080/https://webappsa.riziv-inami.fgov.be/silverpages/Home/SearchHcw/?PageNumber={page_number}&Form.Name=&Form.FirstName=&Form.Profession=&Form.Specialisation=&Form.ConventionState=&Form.Location=0&Form.NihdiNumber=&Form.Qualification=&Form.NorthEastLat=&Form.NorthEastLng=&Form.SouthWestLat=&Form.SouthWestLng=&Form.LocationLng=&Form.LocationLat="
     for attempt in range(retries):
         try:
@@ -40,7 +42,7 @@ def fetch_page(page_number, retries=3):
             return response.text
         except requests.exceptions.RequestException as e:
             print(f"Error fetching page {page_number}, attempt {attempt + 1}/{retries}: {e}")
-            time.sleep(2)  # Wait before retrying
+            time.sleep(3)  # Wait before retrying
     return None
 
 
@@ -58,10 +60,11 @@ def extract_data(html):
                 if label and label_text in label.get_text(strip=True):
                     value_div = row.find("div", class_="col-sm-8")
                     if value_div:
-                        small_tag = value_div.find("small")
-                        return small_tag.get_text(strip=True) if small_tag else "undefined"
+                        small_tags = value_div.find_all("small")
+                        return " ".join(" ".join(tag.stripped_strings) for tag in small_tags)
             return "undefined"
 
+        # Extract fields
         name = get_value("Naam")
         riziv_nr = get_value("RIZIV-nr")
         profession = get_value("Beroep")
@@ -70,9 +73,20 @@ def extract_data(html):
         qualification_date = get_value("Kwal. datum")
         address = get_value("Werkadres")
 
-        data.append((name, riziv_nr, profession, convention_state, qualification, qualification_date, address))
+        # Extract city from address
+        if address != "Geen hoofdwerkadres gekend":
+            # Split the address into parts, assuming the city is the last word
+            address_parts = address.split()
+            city = address_parts[-2] + ", " + address_parts[-1] if len(address_parts) > 1 else "undefined"
+        else:
+            city = "undefined"
+
+        # Add the data as a tuple (including city)
+        data.append((name, riziv_nr, profession, convention_state, qualification, qualification_date, address, city))
 
     return data
+
+
 
 
 def clean_duplicates(conn):
@@ -96,8 +110,8 @@ def save_data(conn, data):
         cursor.execute("SELECT COUNT(*) FROM doctors WHERE riziv_nr = ?", (riziv_nr,))
         if cursor.fetchone()[0] == 0:  # Only insert if no existing record
             cursor.execute("""
-                INSERT INTO doctors (name, riziv_nr, profession, convention_state, qualification, qualification_date, address)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO doctors (name, riziv_nr, profession, convention_state, qualification, qualification_date, address, city)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, record)
     conn.commit()
 
@@ -108,12 +122,12 @@ def fetch_and_store_data_thread(progress_bar, status_label, root):
     current_page = 1
     is_last_page = False
     progress_bar["value"] = 0
-    progress_bar["maximum"] = 200  # Start with an estimated total
+    progress_bar["maximum"] = 400  # Start with an estimated total
 
     def update_gui(page, total):
         progress_bar["maximum"] = total
         progress_bar["value"] = page
-        status_label.config(text=f"Fetching page {page}/{total}...")
+        status_label.config(text=f"Fetching page {page}...")
         root.update_idletasks()
 
     while not is_last_page:
@@ -152,18 +166,27 @@ def create_gui():
     global root
     root = tk.Tk()
     root.title("Doctor Data Scraper")
-    root.geometry("800x600")
+    root.geometry("900x600")  # Increased width to accommodate the new column
 
     button_frame = tk.Frame(root)
     button_frame.pack(pady=10)
 
-    fetch_button = tk.Button(button_frame, text="Fetch Data", command=lambda: start_fetching(progress_bar, status_label, fetch_button), width=20)
+    fetch_button = tk.Button(
+        button_frame,
+        text="Fetch Data",
+        command=lambda: start_fetching(progress_bar, status_label, fetch_button),
+        width=20,
+    )
     fetch_button.pack(side=tk.LEFT, padx=10)
 
-    export_button = tk.Button(button_frame, text="Export to Excel", command=export_to_excel, width=20)
+    export_button = tk.Button(
+        button_frame, text="Export to Excel", command=export_to_excel, width=20
+    )
     export_button.pack(side=tk.LEFT, padx=10)
 
-    preview_button = tk.Button(root, text="Preview Data", command=lambda: preview_data(tree), width=20)
+    preview_button = tk.Button(
+        root, text="Preview Data", command=lambda: preview_data(tree), width=20
+    )
     preview_button.pack(pady=10)
 
     progress_bar = ttk.Progressbar(root, orient="horizontal", mode="determinate")
@@ -175,27 +198,70 @@ def create_gui():
     tree_frame = tk.Frame(root)
     tree_frame.pack(fill="both", expand=True)
 
-    tree = ttk.Treeview(tree_frame, columns=("Name", "RIZIV-nr", "Profession", "Convention State", "Qualification", "Qualification Date", "Address"), show="headings")
+    # Create vertical scrollbar
+    tree_scroll_y = ttk.Scrollbar(tree_frame, orient="vertical")
+    tree_scroll_y.pack(side=tk.RIGHT, fill="y")
+
+    # Create horizontal scrollbar
+    tree_scroll_x = ttk.Scrollbar(tree_frame, orient="horizontal")
+    tree_scroll_x.pack(side=tk.BOTTOM, fill="x")
+
+    # Add "City" column to the Treeview
+    tree = ttk.Treeview(
+        tree_frame,
+        columns=(
+            "Name",
+            "RIZIV-nr",
+            "Profession",
+            "Convention State",
+            "Qualification",
+            "Qualification Date",
+            "Address",
+            "City",
+        ),
+        show="headings",
+        yscrollcommand=tree_scroll_y.set,  # Link vertical scrollbar
+        xscrollcommand=tree_scroll_x.set,  # Link horizontal scrollbar
+    )
+    tree.pack(fill="both", expand=True)
+
+    # Configure the scrollbars to control the treeview
+    tree_scroll_y.config(command=tree.yview)
+    tree_scroll_x.config(command=tree.xview)
+
+    # Set column headings and widths
     for col in tree["columns"]:
         tree.heading(col, text=col)
-        tree.column(col, width=120)
-    tree.pack(fill="both", expand=True)
+        if col == "Address":  # Make the "Address" column wider
+            tree.column(col, width=200)
+        elif col == "City":  # Adjust the width for the "City" column
+            tree.column(col, width=100)
+        else:
+            tree.column(col, width=120)
 
     root.mainloop()
 
 
 def preview_data(tree):
+    # Connect to the SQLite database
     conn = sqlite3.connect("doctor_data.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT name, riziv_nr, profession, convention_state, qualification, qualification_date, address FROM doctors LIMIT 100")
+
+    # Include the "city" column in the query
+    cursor.execute("""
+        SELECT name, riziv_nr, profession, convention_state, qualification, qualification_date, address, city
+        FROM doctors
+    """)
     rows = cursor.fetchall()
     conn.close()
 
-    for row in tree.get_children():
-        tree.delete(row)
+    # Clear existing rows in the Treeview
+    tree.delete(*tree.get_children())
 
+    # Insert new data into the Treeview
     for row in rows:
         tree.insert("", "end", values=row)
+
 
 
 def export_to_excel():
@@ -212,6 +278,17 @@ def export_to_excel():
         messagebox.showinfo("Export Complete", f"Data has been exported to {file_path}")
 
 
+def start_proxy():
+    # Path to the Node.js script
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proxy", "server.js")
+    
+    # Run the Node.js script with hidden CMD window (Windows-specific)
+    subprocess.run(
+        ["node", script_path],
+        creationflags=subprocess.CREATE_NO_WINDOW
+    )
+
 if __name__ == "__main__":
-    #threading.Thread(target=corsProxy.run).start()
+    # Start the proxy server in a separate thread
+    threading.Thread(target=start_proxy, daemon=True).start()
     create_gui()
