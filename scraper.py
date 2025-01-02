@@ -1,3 +1,4 @@
+import logging
 import requests
 from bs4 import BeautifulSoup
 import sqlite3
@@ -10,9 +11,16 @@ import threading
 import subprocess
 import os
 
+# Configure logging
+logging.basicConfig(
+    filename="doctor_data_scraper.log",
+    level=logging.DEBUG,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 # Initialize the SQLite database
 def initialize_database():
+    logging.info("Initializing database.")
     conn = sqlite3.connect("doctor_data.db")
     cursor = conn.cursor()
     cursor.execute("""
@@ -31,23 +39,25 @@ def initialize_database():
     conn.commit()
     return conn
 
-
 # Function to fetch a single page with retries
 def fetch_page(page_number, retries=5):
     url = f"http://localhost:8080/https://webappsa.riziv-inami.fgov.be/silverpages/Home/SearchHcw/?PageNumber={page_number}&Form.Name=&Form.FirstName=&Form.Profession=&Form.Specialisation=&Form.ConventionState=&Form.Location=0&Form.NihdiNumber=&Form.Qualification=&Form.NorthEastLat=&Form.NorthEastLng=&Form.SouthWestLat=&Form.SouthWestLng=&Form.LocationLng=&Form.LocationLat="
     for attempt in range(retries):
         try:
+            logging.info(f"Fetching page {page_number}, attempt {attempt + 1}/{retries}.")
             response = requests.get(url, timeout=60)
             response.raise_for_status()
+            logging.info(f"Successfully fetched page {page_number}.")
             return response.text
         except requests.exceptions.RequestException as e:
-            print(f"Error fetching page {page_number}, attempt {attempt + 1}/{retries}: {e}")
+            logging.warning(f"Error fetching page {page_number}, attempt {attempt + 1}: {e}")
             time.sleep(3)  # Wait before retrying
+    logging.error(f"Failed to fetch page {page_number} after {retries} attempts.")
     return None
-
 
 # Extract data from a single page
 def extract_data(html):
+    logging.info("Extracting data from HTML.")
     soup = BeautifulSoup(html, "html.parser")
     entries = soup.select(".card")
     data = []
@@ -64,32 +74,33 @@ def extract_data(html):
                         return " ".join(" ".join(tag.stripped_strings) for tag in small_tags)
             return "undefined"
 
-        # Extract fields
-        name = get_value("Naam")
-        riziv_nr = get_value("RIZIV-nr")
-        profession = get_value("Beroep")
-        convention_state = get_value("Conv.")
-        qualification = get_value("Kwalificatie")
-        qualification_date = get_value("Kwal. datum")
-        address = get_value("Werkadres")
+        try:
+            # Extract fields
+            name = get_value("Naam")
+            riziv_nr = get_value("RIZIV-nr")
+            profession = get_value("Beroep")
+            convention_state = get_value("Conv.")
+            qualification = get_value("Kwalificatie")
+            qualification_date = get_value("Kwal. datum")
+            address = get_value("Werkadres")
 
-        # Extract city from address
-        if address != "Geen hoofdwerkadres gekend":
-            # Split the address into parts, assuming the city is the last word
-            address_parts = address.split()
-            city = address_parts[-2] + ", " + address_parts[-1] if len(address_parts) > 1 else "undefined"
-        else:
-            city = "undefined"
+            # Extract city from address
+            if address != "Geen hoofdwerkadres gekend":
+                address_parts = address.split()
+                city = address_parts[-2] + ", " + address_parts[-1] if len(address_parts) > 1 else "undefined"
+            else:
+                city = "undefined"
 
-        # Add the data as a tuple (including city)
-        data.append((name, riziv_nr, profession, convention_state, qualification, qualification_date, address, city))
+            data.append((name, riziv_nr, profession, convention_state, qualification, qualification_date, address, city))
+        except Exception as e:
+            logging.error(f"Error processing entry: {e}")
 
+    logging.info(f"Extracted {len(data)} entries from the page.")
     return data
 
-
-
-
+# Remove duplicates from the database
 def clean_duplicates(conn):
+    logging.info("Cleaning duplicate entries in the database.")
     cursor = conn.cursor()
     cursor.execute("""
         DELETE FROM doctors
@@ -103,20 +114,22 @@ def clean_duplicates(conn):
 
 # Save data to the SQLite database
 def save_data(conn, data):
+    logging.info(f"Saving {len(data)} entries to the database.")
     cursor = conn.cursor()
     for record in data:
         riziv_nr = record[1]
-        # Check if the riziv_nr already exists
-        cursor.execute("SELECT COUNT(*) FROM doctors WHERE riziv_nr = ?", (riziv_nr,))
-        if cursor.fetchone()[0] == 0:  # Only insert if no existing record
-            cursor.execute("""
-                INSERT INTO doctors (name, riziv_nr, profession, convention_state, qualification, qualification_date, address, city)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, record)
+        try:
+            cursor.execute("SELECT COUNT(*) FROM doctors WHERE riziv_nr = ?", (riziv_nr,))
+            if cursor.fetchone()[0] == 0:
+                cursor.execute("""
+                    INSERT INTO doctors (name, riziv_nr, profession, convention_state, qualification, qualification_date, address, city)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, record)
+        except sqlite3.IntegrityError as e:
+            logging.warning(f"Failed to insert record {record} due to IntegrityError: {e}")
     conn.commit()
 
-
-# Function to fetch and store data
+# Fetch and store data
 def fetch_and_store_data_thread(progress_bar, status_label, root):
     conn = initialize_database()
     current_page = 1
@@ -131,19 +144,20 @@ def fetch_and_store_data_thread(progress_bar, status_label, root):
         root.update_idletasks()
 
     while not is_last_page:
+        logging.info(f"Fetching data for page {current_page}.")
         html = fetch_page(current_page)
         if html:
             data = extract_data(html)
             if data:
                 save_data(conn, data)
-                print(f"Page {current_page}: {len(data)} entries saved.")
+                logging.info(f"Page {current_page}: {len(data)} entries saved.")
                 update_gui(current_page, progress_bar["maximum"])
             else:
-                print(f"No data found on page {current_page}. Assuming last page.")
+                logging.info(f"No data found on page {current_page}. Assuming last page.")
                 is_last_page = True
         else:
-            print(f"Failed to fetch page {current_page}. Moving on.")
-            is_last_page = True  # Stop on a complete failure
+            logging.warning(f"Failed to fetch page {current_page}. Assuming last page.")
+            is_last_page = True
 
         current_page += 1
         time.sleep(1)  # Prevent overwhelming the server
@@ -153,13 +167,12 @@ def fetch_and_store_data_thread(progress_bar, status_label, root):
     conn.close()
     progress_bar["value"] = progress_bar["maximum"]
     status_label.config(text="Fetching Complete!")
-
+    logging.info("Data fetching complete.")
 
 # Function to start fetching data in a thread
 def start_fetching(progress_bar, status_label, fetch_button):
     fetch_button.config(state="disabled")
     threading.Thread(target=fetch_and_store_data_thread, args=(progress_bar, status_label, root)).start()
-
 
 # GUI Creation
 def create_gui():
@@ -241,13 +254,9 @@ def create_gui():
 
     root.mainloop()
 
-
 def preview_data(tree):
-    # Connect to the SQLite database
     conn = sqlite3.connect("doctor_data.db")
     cursor = conn.cursor()
-
-    # Include the "city" column in the query
     cursor.execute("""
         SELECT name, riziv_nr, profession, convention_state, qualification, qualification_date, address, city
         FROM doctors
@@ -255,40 +264,44 @@ def preview_data(tree):
     rows = cursor.fetchall()
     conn.close()
 
-    # Clear existing rows in the Treeview
     tree.delete(*tree.get_children())
-
-    # Insert new data into the Treeview
     for row in rows:
         tree.insert("", "end", values=row)
 
-
+def export_to_excel_thread():
+    """
+    Function to export data to an Excel file in a separate thread.
+    """
+    try:
+        conn = sqlite3.connect("doctor_data.db")
+        df = pd.read_sql_query("SELECT * FROM doctors", conn)
+        conn.close()
+        df = df.drop_duplicates(subset=["riziv_nr"])
+        file_path = asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx")]
+        )
+        if file_path:
+            df.to_excel(file_path, index=False)
+            messagebox.showinfo("Export Complete", f"Data has been exported to {file_path}")
+    except Exception as e:
+        logging.error(f"Error exporting to Excel: {e}")
+        messagebox.showerror("Export Failed", f"An error occurred while exporting: {e}")
 
 def export_to_excel():
-    conn = sqlite3.connect("doctor_data.db")
-    df = pd.read_sql_query("SELECT * FROM doctors", conn)
-    conn.close()
-
-    # Remove duplicate rows based on 'riziv_nr'
-    df = df.drop_duplicates(subset=["riziv_nr"])
-
-    file_path = asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel files", "*.xlsx")])
-    if file_path:
-        df.to_excel(file_path, index=False)
-        messagebox.showinfo("Export Complete", f"Data has been exported to {file_path}")
+    """
+    Function to start the Excel export in a separate thread.
+    """
+    threading.Thread(target=export_to_excel_thread, daemon=True).start()
 
 
 def start_proxy():
-    # Path to the Node.js script
     script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proxy", "server.js")
-    
-    # Run the Node.js script with hidden CMD window (Windows-specific)
     subprocess.run(
         ["node", script_path],
         creationflags=subprocess.CREATE_NO_WINDOW
     )
 
 if __name__ == "__main__":
-    # Start the proxy server in a separate thread
     threading.Thread(target=start_proxy, daemon=True).start()
     create_gui()
