@@ -21,8 +21,9 @@ exe = EXE(
     a.scripts,
     a.binaries,
     a.datas,
+    a.hiddenimports
     [],
-    name='SilverScraper',
+    name='scraper',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

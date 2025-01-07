@@ -11,6 +11,7 @@ import threading
 import subprocess
 import os
 
+
 # Configure logging
 logging.basicConfig(
     filename="doctor_data_scraper.log",
