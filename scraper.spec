@@ -21,7 +21,6 @@ exe = EXE(
     a.scripts,
     a.binaries,
     a.datas,
-    a.hiddenimports
     [],
     name='scraper',
     debug=False,

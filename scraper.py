@@ -42,11 +42,26 @@ def initialize_database():
 
 # Function to fetch a single page with retries
 def fetch_page(page_number, retries=5):
+    # http://localhost:8080/https://webappsa.riziv-inami.fgov.be/silverpages/Home/SearchHcw/?PageNumber=2&Form.Name=a&Form.FirstName=&Form.Profession=&Form.Specialisation=&Form.ConventionState=&Form.Location=&Form.NihdiNumber=&Form.Qualification=&Form.Attribute=&Form.AttributeValue=&Form.NorthEastLat=&Form.NorthEastLng=&Form.SouthWestLat=&Form.SouthWestLng=&Form.LocationLng=&Form.LocationLat=
     url = f"http://localhost:8080/https://webappsa.riziv-inami.fgov.be/silverpages/Home/SearchHcw/?PageNumber={page_number}&Form.Name=&Form.FirstName=&Form.Profession=&Form.Specialisation=&Form.ConventionState=&Form.Location=0&Form.NihdiNumber=&Form.Qualification=&Form.NorthEastLat=&Form.NorthEastLng=&Form.SouthWestLat=&Form.SouthWestLng=&Form.LocationLng=&Form.LocationLat="
     for attempt in range(retries):
         try:
             logging.info(f"Fetching page {page_number}, attempt {attempt + 1}/{retries}.")
-            response = requests.get(url, timeout=60)
+            headers = {
+                'Accept-Language': 'nl-NL,nl;q=0.9,en-US;q=0.8,en;q=0.7',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                'Cache-Control': 'max-age=0',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Sec-Fetch-User': '?1'
+            }
+            cookies = {
+                '.nihdi.language': 'c%3Dnl-BE%7Cuic%3Dnl-BE'
+            }
+            response = requests.get(url, headers=headers, cookies=cookies, timeout=60)
             response.raise_for_status()
             logging.info(f"Successfully fetched page {page_number}.")
             return response.text
