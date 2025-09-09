@@ -18,6 +18,7 @@ import queue
 # Globals for runtime state
 stop_event = threading.Event()
 scrape_start_time = None
+inserted_signatures = set()  # in-memory signatures of already inserted records
 
 # Configure logging
 logging.basicConfig(
@@ -45,7 +46,46 @@ def initialize_database():
         )
     """)
     conn.commit()
+    # Load existing signatures so we don't reinject duplicates across runs
+    _load_existing_signatures(conn)
     return conn
+
+# === Deduplication helpers ===
+def _record_signature(record):
+    """Return a tuple signature for a doctor record used for in-memory deduplication.
+
+    Priority key is riziv_nr when defined; otherwise build a composite of other fields (case-insensitive).
+    """
+    (name, riziv_nr, profession, convention_state, qualification,
+     qualification_date, address, city) = record
+    if riziv_nr and riziv_nr.strip().lower() != "undefined":
+        return ("R", riziv_nr.strip())
+    norm = lambda v: (v or "").strip().lower()
+    return (
+        "F",
+        norm(name),
+        norm(profession),
+        norm(convention_state),
+        norm(qualification),
+        norm(qualification_date),
+        norm(address),
+        norm(city),
+    )
+
+def _load_existing_signatures(conn):
+    """Populate the in-memory signature set with rows already present in the DB."""
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT name, riziv_nr, profession, convention_state, qualification, qualification_date, address, city
+            FROM doctors
+        """)
+        rows = cur.fetchall()
+        for row in rows:
+            inserted_signatures.add(_record_signature(row))
+        logging.info(f"Loaded {len(rows)} existing rows into signature set.")
+    except Exception as e:
+        logging.warning(f"Failed loading existing signatures: {e}")
 
 # Function to fetch a single page with retries
 def fetch_page(page_number, location_value, retries=5):
@@ -183,28 +223,32 @@ def clean_duplicates(conn):
 def save_data(conn, data):
     logging.info(f"Saving {len(data)} entries to the database.")
     cursor = conn.cursor()
+    inserted = 0
+    skipped = 0
     for record in data:
-        riziv_nr = record[1]
         try:
-            if riziv_nr and riziv_nr != "undefined":
-                cursor.execute("SELECT COUNT(*) FROM doctors WHERE riziv_nr = ?", (riziv_nr,))
-                exists = cursor.fetchone()[0] > 0
+            sig = _record_signature(record)
+            if sig in inserted_signatures:
+                skipped += 1
+                continue
+            # Use OR IGNORE to respect UNIQUE constraint (riziv_nr) without throwing
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO doctors
+                (name, riziv_nr, profession, convention_state, qualification, qualification_date, address, city)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                record,
+            )
+            if cursor.rowcount == 1:  # actually inserted
+                inserted_signatures.add(sig)
+                inserted += 1
             else:
-                exists = False  # allow multiple unknowns; log them
-            if not exists:
-                cursor.execute(
-                    """
-                    INSERT INTO doctors (name, riziv_nr, profession, convention_state, qualification, qualification_date, address, city)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    record,
-                )
-                logging.debug(f"Inserted record riziv={riziv_nr} name={record[0]!r}")
-            else:
-                logging.debug(f"Skipped duplicate riziv={riziv_nr} name={record[0]!r}")
-        except sqlite3.IntegrityError as e:
-            logging.warning(f"Failed to insert record {record} due to IntegrityError: {e}")
+                skipped += 1
+        except Exception as e:
+            logging.warning(f"Failed to insert record {record}: {e}")
     conn.commit()
+    logging.info(f"Inserted {inserted} new records; skipped {skipped} duplicates.")
 
 # Fetch and store data
 def fetch_and_store_data_thread(progress_bar, status_label, fetch_button, root, max_consecutive_empty=2, max_pages=1000, postal_codes=None, include_unknown_pass=True):
@@ -287,13 +331,23 @@ def fetch_and_store_data_thread(progress_bar, status_label, fetch_button, root, 
     # Optional additional pass to capture unknown addresses using Form.Location=0
     if include_unknown_pass and not stop_event.is_set():
         unknown_code = "0"
-        logging.info("=== Starting unknown-address pass (Form.Location=0) ===")
+        # Allow a separate page cap for the unknown pass via env var (default: max_pages or 1000 if max_pages < 1000)
+        try:
+            env_unknown = os.environ.get("SCRAPER_UNKNOWN_MAX_PAGES")
+            if env_unknown is not None:
+                unknown_max_pages = int(env_unknown)
+            else:
+                # If user used a small per-postcode max_pages (like 100), still allow deeper unknown pass up to 1000 by default
+                unknown_max_pages = 1000 if max_pages < 1000 else max_pages
+        except ValueError:
+            unknown_max_pages = max_pages
+        logging.info(f"=== Starting unknown-address pass (Form.Location=0) up to {unknown_max_pages} pages ===")
         current_page = 1
         consecutive_empty = 0
         approx_inserted = 0
-        # Extend progress bar maximum to reflect extra pass
-        progress_bar["maximum"] += max_pages
-        while current_page <= max_pages and consecutive_empty < max_consecutive_empty:
+        # Extend progress bar maximum to reflect extra pass (difference only)
+        progress_bar["maximum"] += unknown_max_pages
+        while current_page <= unknown_max_pages and consecutive_empty < max_consecutive_empty:
             html = fetch_page(current_page, unknown_code)
             if not html:
                 consecutive_empty += 1
@@ -331,7 +385,7 @@ def fetch_and_store_data_thread(progress_bar, status_label, fetch_button, root, 
             'pages_crawled': current_page - 1,
             'approx_inserted': approx_inserted,
             'stopped_reason': (
-                f"{consecutive_empty} empty pages" if consecutive_empty >= max_consecutive_empty else f"reached max_pages={max_pages}"
+                f"{consecutive_empty} empty pages" if consecutive_empty >= max_consecutive_empty else f"reached unknown_max_pages={unknown_max_pages}"
             )
         }
         logging.info(f"=== Finished unknown-address pass: {metrics['UNKNOWN']} ===")
@@ -586,7 +640,8 @@ def preview_data(tree):
     cursor = conn.cursor()
     cursor.execute("""
         SELECT name, riziv_nr, profession, convention_state, qualification, qualification_date, address, city
-        FROM doctors
+    FROM doctors
+    ORDER BY name COLLATE NOCASE ASC
     """)
     rows = cursor.fetchall()
     conn.close()
