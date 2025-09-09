@@ -1,3 +1,4 @@
+from tqdm import tqdm
 import pandas as pd
 import time
 import os
@@ -96,7 +97,12 @@ if 'address' not in df.columns:
     raise Exception(f"The input file must contain a column named 'address'. Found columns: {list(df.columns)}")
 if 'city' not in df.columns:
     print("Warning: No 'city' column found. Will only geocode using 'address'.")
-df[["lat", "lon"]] = df.apply(lambda row: pd.Series(cached_geocode_row(row)), axis=1)
+
+# Progress bar for geocoding
+results = []
+for _, row in tqdm(df.iterrows(), total=len(df), desc="Geocoding"):
+    results.append(cached_geocode_row(row))
+df[["lat", "lon"]] = results
 
 # === Save cache for next run ===
 with open(CACHE_FILE, "w", encoding="utf-8") as f:

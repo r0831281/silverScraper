@@ -6,3 +6,4 @@ streamlit
 pydeck
 geopy
 geopy[rate_limiter]
+tqdm

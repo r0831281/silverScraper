@@ -7,12 +7,15 @@ import pandas as pd
 import tkinter as tk
 from tkinter import ttk, messagebox
 from tkinter.filedialog import asksaveasfilename, askopenfilename
+
 import threading
 import subprocess
 import os
 import re
 from datetime import date, datetime
 import queue
+import sys
+import argparse
 
 
 # Globals for runtime state
@@ -411,7 +414,7 @@ def fetch_and_store_data_thread(progress_bar, status_label, fetch_button, root, 
     fetch_button.config(state="normal")
 
 # Function to start fetching data in a thread
-def start_fetching(progress_bar, status_label, fetch_button, postal_codes_entry):
+def start_fetching(progress_bar, status_label, fetch_button, postal_codes_entry, include_unknown_pass=True):
     fetch_button.config(state="disabled")
     stop_event.clear()
     global scrape_start_time
@@ -428,15 +431,14 @@ def start_fetching(progress_bar, status_label, fetch_button, postal_codes_entry)
     logging.info(f"User provided {len(postal_codes)} postal codes.")
     max_empty = int(os.environ.get("SCRAPER_MAX_EMPTY", "2"))
     max_pages = int(os.environ.get("SCRAPER_MAX_PAGES", "100"))  # lower default for per-postcode crawl
-    include_unknown = os.environ.get("SCRAPER_UNKNOWN_PASS", "1") != "0"
     threading.Thread(
         target=fetch_and_store_data_thread,
-        args=(progress_bar, status_label, fetch_button, root, max_empty, max_pages, postal_codes, include_unknown),
+        args=(progress_bar, status_label, fetch_button, root, max_empty, max_pages, postal_codes, include_unknown_pass),
         daemon=True
     ).start()
 
 # GUI Creation
-def create_gui():
+def create_gui(include_unknown_pass=True):
     global root
     root = tk.Tk()
     root.title("Doctor Data Scraper")
@@ -493,10 +495,11 @@ def create_gui():
     tk.Button(btns_frame, text="Reload default", command=lambda: load_postal_codes_file(None)).pack(side=tk.RIGHT, padx=4)
     tk.Button(btns_frame, text="Load file...", command=choose_postal_codes_file).pack(side=tk.RIGHT)
 
+
     fetch_button = tk.Button(
         button_frame,
         text="Fetch Data",
-        command=lambda: start_fetching(progress_bar, status_label, fetch_button, postal_codes_entry),
+        command=lambda: start_fetching(progress_bar, status_label, fetch_button, postal_codes_entry, include_unknown_pass),
         width=20,
     )
     fetch_button.pack(side=tk.LEFT, padx=10)
@@ -685,5 +688,9 @@ def start_proxy():
     )
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Doctor Data Scraper")
+    parser.add_argument("--no-unknown-pass", action="store_true", help="Disable the unknown pass (Form.Location=0)")
+    args, unknown = parser.parse_known_args()
     threading.Thread(target=start_proxy, daemon=True).start()
-    create_gui()
+    # Pass the toggle to the GUI
+    create_gui(include_unknown_pass=not args.no_unknown_pass)
