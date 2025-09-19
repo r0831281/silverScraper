@@ -1,3 +1,5 @@
+from colorama import Fore, Style, init
+init(autoreset=True)
 from tqdm import tqdm
 import pandas as pd
 import time
@@ -62,10 +64,9 @@ def cached_geocode_row(row):
     address = str(row['address'])
     address_query = f"{address}, Belgium"
 
-
     # Try address cache first
     if address_query in cache:
-        print(f"Address found in cache: {address_query} -> {cache[address_query]}")
+        tqdm.write(f"{Fore.CYAN}Address found in cache:{Style.RESET_ALL} {address_query} -> {cache[address_query]}")
         return cache[address_query]
 
     # Try geocoding address (with retries)
@@ -75,10 +76,10 @@ def cached_geocode_row(row):
             location = geocode(address_query)
             if location:
                 result = (location.latitude, location.longitude)
-                print(f"Address geocoded: {address_query} -> {result}")
+                tqdm.write(f"{Fore.GREEN}Address geocoded{Style.RESET_ALL}: {address_query} -> {result}")
                 break
         except Exception as e:
-            print(f"Attempt {attempt+1}/3: Error geocoding {address_query}: {e}")
+            tqdm.write(f"{Fore.YELLOW}Attempt {attempt+1}/3{Style.RESET_ALL}: Error geocoding {address_query}: {e}")
             time.sleep(2)
 
     # If address fails, try city
@@ -89,7 +90,7 @@ def cached_geocode_row(row):
 
         # Try city cache first
         if city_key in cache:
-            print(f"Address not found, found city in cache: {city_query} -> {cache[city_key]}")
+            tqdm.write(f"{Fore.CYAN}Address not found, found city in cache{Style.RESET_ALL}: {city_query} -> {cache[city_key]}")
             result = cache[city_key]
         else:
             for attempt in range(3):
@@ -97,20 +98,22 @@ def cached_geocode_row(row):
                     location_city = geocode(city_query)
                     if location_city:
                         result = (location_city.latitude, location_city.longitude)
-                        print(f"\nAddress not found, found by geocoding city: {city_query} -> {result}")
+                        tqdm.write(f"{Fore.GREEN}Address not found, found by geocoding city{Style.RESET_ALL}: {city_query} -> {result}")
                         break
                 except Exception as e:
-                    print(f"\nAttempt {attempt+1}/3: Error geocoding city {city_query}: {e}")
+                    tqdm.write(f"{Fore.YELLOW}Attempt {attempt+1}/3{Style.RESET_ALL}: Error geocoding city {city_query}: {e}")
                     time.sleep(1)
             cache[city_key] = result
 
+    if result == (None, None):
+        tqdm.write(f"{Fore.RED}Geocoding failed for{Style.RESET_ALL}: {address_query}{f' / {city_query}' if 'city' in row and pd.notnull(row['city']) else ''}")
     # Cache the result for the address
     cache[address_query] = result
     return result
 
 # === Geocode addresses ===
 if 'address' not in df.columns:
-    raise Exception(f"The input file must contain a column named 'address'. Found columns: {list(df.columns)}")
+    raise Exception(f"The input file must contain a column named 'address'. Found columns: {list(df.columns)}\n")
 if 'city' not in df.columns:
     print("Warning: No 'city' column found. Will only geocode using 'address'.")
 
@@ -129,9 +132,9 @@ with open(CACHE_FILE, "w", encoding="utf-8") as f:
 file_ext = os.path.splitext(OUTPUT_FILE)[1].lower()
 if file_ext in [".xlsx", ".xls"]:
     df.to_excel(OUTPUT_FILE, index=False)
-    print(f"✅ Geocoding complete. Saved to {OUTPUT_FILE} (Excel format)")
+    print(f"{Fore.GREEN}✅ Geocoding complete. Saved to {OUTPUT_FILE} (Excel format){Style.RESET_ALL}")
 elif file_ext == ".csv":
     df.to_csv(OUTPUT_FILE, index=False, encoding="utf-8")
-    print(f"✅ Geocoding complete. Saved to {OUTPUT_FILE} (CSV, UTF-8 encoding)")
+    print(f"{Fore.GREEN}✅ Geocoding complete. Saved to {OUTPUT_FILE} (CSV, UTF-8 encoding){Style.RESET_ALL}")
 else:
     raise Exception(f"Unsupported output file type: {OUTPUT_FILE}")
