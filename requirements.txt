@@ -1,0 +1,9 @@
+beautifulsoup4
+requests
+pandas
+openpyxl
+streamlit
+pydeck
+geopy
+geopy[rate_limiter]
+tqdm
