@@ -136,7 +136,7 @@ if uploaded_file is not None:
             filtered = filtered[filtered["Distance_km"] <= radius]
     else:
         # If filtered is empty, add the Distance_km column as empty
-        filtered["Distance_km"] = []
+        filtered["Distance_km"] = pd.Series([], dtype=float)
 
     # Aggregate data points by location to show count of overlapping points
     # Only calculate if needed for visualization
@@ -158,13 +158,14 @@ if uploaded_file is not None:
     # For large datasets, sample data for map display to improve performance
     MAX_MAP_POINTS = 8000  # Limit map points for performance
     
-    if len(filtered) > MAX_MAP_POINTS:
+    if len(filtered) >= MAX_MAP_POINTS:
         # Sample data for map display
         map_data = filtered.sample(n=MAX_MAP_POINTS, random_state=42)
         st.warning(f"⚡ Showing {MAX_MAP_POINTS:,} sampled points on map for performance (out of {len(filtered):,} total results)")
     else:
         map_data = filtered
-    
+        if len(filtered) == 0:
+            st.info("No data available to display on the map.")
     # Prepare doctors data for tooltips (include name and riziv_nr)
     doctors_data = map_data[['lat', 'lon', 'name', 'riziv_nr', 'profession', 'city', 'Distance_km']].copy()
     # Map tooltip HTML for doctors
