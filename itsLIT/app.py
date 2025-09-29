@@ -156,7 +156,7 @@ if uploaded_file is not None:
 
     # Map visualization with performance optimization
     # For large datasets, sample data for map display to improve performance
-    MAX_MAP_POINTS = 5000  # Limit map points for performance
+    MAX_MAP_POINTS = 8000  # Limit map points for performance
     
     if len(filtered) > MAX_MAP_POINTS:
         # Sample data for map display
