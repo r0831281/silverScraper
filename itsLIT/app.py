@@ -136,7 +136,7 @@ if uploaded_file is not None:
             filtered = filtered[filtered["Distance_km"] <= radius]
     else:
         # If filtered is empty, add the Distance_km column as empty
-        filtered["Distance_km"] = []
+        filtered["Distance_km"] = pd.Series([], dtype=float)
 
     # Aggregate data points by location to show count of overlapping points
     # Only calculate if needed for visualization
