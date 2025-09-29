@@ -158,13 +158,14 @@ if uploaded_file is not None:
     # For large datasets, sample data for map display to improve performance
     MAX_MAP_POINTS = 5000  # Limit map points for performance
     
-    if len(filtered) > MAX_MAP_POINTS:
+    if len(filtered) >= MAX_MAP_POINTS:
         # Sample data for map display
         map_data = filtered.sample(n=MAX_MAP_POINTS, random_state=42)
         st.warning(f"⚡ Showing {MAX_MAP_POINTS:,} sampled points on map for performance (out of {len(filtered):,} total results)")
     else:
         map_data = filtered
-    
+        if len(filtered) == 0:
+            st.info("No data available to display on the map.")
     # Prepare doctors data for tooltips (include name and riziv_nr)
     doctors_data = map_data[['lat', 'lon', 'name', 'riziv_nr', 'profession', 'city', 'Distance_km']].copy()
     # Map tooltip HTML for doctors
